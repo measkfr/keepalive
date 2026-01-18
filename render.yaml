@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: discord-keepalive
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python keepalive.py
+    envVars:
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: PORT
+        value: 10000
+    healthCheckPath: /health
+    autoDeploy: true
