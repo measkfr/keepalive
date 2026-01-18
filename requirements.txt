@@ -1,5 +1,5 @@
-discord.py-self==2.3.2
-Flask==2.3.3
-flask-cors==4.0.0
-python-dotenv==1.0.0
-requests==2.31.0
+discord.py-self
+Flask
+flask-cors
+python-dotenv
+requests
