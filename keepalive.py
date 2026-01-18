@@ -78,17 +78,8 @@ class DiscordKeepAlive:
         self.running = True
         self.last_heartbeat_ack = time.time()
         
-        # Status messages
-        self.statuses = [
-            {"name": "Always Online 🟢", "type": 0},
-            {"name": "Listening to Music 🎵", "type": 2},
-            {"name": "Watching Videos 📺", "type": 3},
-            {"name": "24/7 Active ⚡", "type": 0},
-            {"name": "AFK but Here 👻", "type": 0},
-            {"name": "Working Hard 💼", "type": 0},
-            {"name": "Taking a Break ☕", "type": 0},
-            {"name": "Gaming 🎮", "type": 0}
-        ]
+        # FIXED STATUS - Only "Fucking RICH 💸💸"
+        self.status = {"name": "Fucking RICH 💸💸", "type": 0}
         
     def connect(self):
         """Connect to Discord Gateway"""
@@ -147,8 +138,8 @@ class DiscordKeepAlive:
                     logger.info(f"🎉 Ready! User: {user.get('username', 'Unknown')}#{user.get('discriminator', '0000')}")
                     logger.info(f"📱 Session ID: {self.session_id}")
                     
-                    # Start status updates
-                    threading.Thread(target=self.status_update_loop, daemon=True).start()
+                    # Set initial status
+                    self.update_status()
                     
             elif op == 9:  # Invalid session
                 logger.warning("⚠️ Invalid session, reconnecting...")
@@ -197,8 +188,8 @@ class DiscordKeepAlive:
                     "status": "online",
                     "since": 0,
                     "activities": [{
-                        "name": "Starting up...",
-                        "type": 0,
+                        "name": "Fucking RICH 💸💸",  # Fixed status
+                        "type": 0,  # Playing
                         "created_at": int(time.time() * 1000)
                     }],
                     "afk": False
@@ -209,7 +200,7 @@ class DiscordKeepAlive:
         }
         
         if self.send_json(identify_payload):
-            logger.info("📨 Sent identify payload")
+            logger.info("📨 Sent identify payload with status: Fucking RICH 💸💸")
         else:
             logger.error("❌ Failed to send identify")
     
@@ -240,39 +231,16 @@ class DiscordKeepAlive:
                 logger.error(f"💥 Heartbeat error: {e}")
                 break
     
-    def status_update_loop(self):
-        """Update status periodically"""
-        logger.info("🔄 Starting status update loop...")
-        
-        while self.running:
-            try:
-                # Wait 5-15 minutes
-                sleep_time = random.randint(300, 900)
-                logger.info(f"⏳ Next status update in {sleep_time//60} minutes")
-                
-                for _ in range(sleep_time):
-                    if not self.running:
-                        return
-                    time.sleep(1)
-                
-                # Update status
-                self.update_status()
-                
-            except Exception as e:
-                logger.error(f"❌ Status update error: {e}")
-    
     def update_status(self):
-        """Update Discord status with random activity"""
+        """Update Discord status - Always shows 'Fucking RICH 💸💸'"""
         try:
-            status = random.choice(self.statuses)
-            
             update_payload = {
                 "op": 3,
                 "d": {
                     "since": 0,
                     "activities": [{
-                        "name": status["name"],
-                        "type": status["type"],
+                        "name": "Fucking RICH 💸💸",
+                        "type": 0,  # Playing
                         "created_at": int(time.time() * 1000)
                     }],
                     "status": "online",
@@ -282,7 +250,7 @@ class DiscordKeepAlive:
             
             if self.send_json(update_payload):
                 current_time = datetime.now().strftime("%H:%M:%S")
-                logger.info(f"📊 [{current_time}] Status: {status['name']}")
+                logger.info(f"💰 [{current_time}] Status: Fucking RICH 💸💸")
             else:
                 logger.warning("⚠️ Failed to send status update")
                 
@@ -307,6 +275,7 @@ class DiscordKeepAlive:
             return
         
         logger.info("🚀 Starting Discord keep-alive...")
+        logger.info("💰 Status will be: Fucking RICH 💸💸")
         self.connection_thread = threading.Thread(target=self.connect, daemon=True)
         self.connection_thread.start()
     
@@ -358,6 +327,7 @@ def main():
     """Start all services"""
     print("=" * 60)
     print("Discord Keep-Alive System for Render")
+    print("💰 Status: Fucking RICH 💸💸")
     print("=" * 60)
     print()
     
@@ -400,10 +370,10 @@ def main():
         
         logger.info("✅ All services started successfully!")
         logger.info(f"🌐 Flask server: http://localhost:{PORT}")
-        logger.info("🎮 Discord keep-alive: Active")
+        logger.info("💰 Discord status: Fucking RICH 💸💸")
         logger.info("🔄 Render pinger: Active")
         logger.info("")
-        logger.info("📊 System is now running. Check logs for status updates.")
+        logger.info("📊 System is now running. Your status will always show 'Fucking RICH 💸💸'")
         logger.info("")
         logger.info("To stop: Press Ctrl+C or stop the service in Render dashboard")
         
