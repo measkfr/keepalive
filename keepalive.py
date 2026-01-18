@@ -1,13 +1,14 @@
-import os
-import sys
-import time
+import discord
+import asyncio
 import random
-import logging
 import threading
-import requests
+import time
+import logging
+import sys
+import os
 from datetime import datetime
-from dotenv import load_dotenv
 from flask import Flask, jsonify
+from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
@@ -15,13 +16,16 @@ load_dotenv()
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('discord_keepalive.log')
+    ]
 )
 logger = logging.getLogger(__name__)
 
 # ============================
-# FLASK SERVER (MINIMAL)
+# FLASK SERVER
 # ============================
 app = Flask(__name__)
 
@@ -31,181 +35,208 @@ def home():
         "status": "online",
         "service": "discord-keepalive",
         "timestamp": datetime.now().isoformat(),
-        "message": "Server is running"
+        "discord_running": discord_running,
+        "port": PORT
     })
 
 @app.route("/health")
 def health():
-    return jsonify({
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat()
-    })
+    return jsonify({"status": "healthy"})
 
 @app.route("/ping")
 def ping():
-    current_time = datetime.now().strftime("%H:%M:%S")
-    logger.info(f"Keep-alive ping at {current_time}")
-    return jsonify({
-        "pong": True,
-        "timestamp": datetime.now().isoformat()
-    })
+    logger.info(f"Ping at {datetime.now().strftime('%H:%M:%S')}")
+    return jsonify({"pong": True})
 
 def start_flask():
-    port = int(os.environ.get('PORT', 10000))
-    logger.info(f"Starting Flask server on port {port}")
-    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+    logger.info(f"Starting Flask on port {PORT}")
+    app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)
 
 # ============================
-# DISCORD KEEP-ALIVE (WEBHOOK METHOD)
+# DISCORD CLIENT WITH DISCORD.PY-SELF
 # ============================
 class DiscordKeepAlive:
     def __init__(self):
         self.token = os.environ.get('DISCORD_TOKEN')
-        self.status_url = os.environ.get('STATUS_URL', '')
-        self.session = requests.Session()
-        
         if not self.token:
             logger.error("❌ DISCORD_TOKEN not found!")
             raise ValueError("DISCORD_TOKEN is required")
         
-        # Status messages
+        logger.info(f"Token starts with: {self.token[:20]}...")
+        
+        # Setup client with discord.py-self
+        self.client = discord.Client()
+        self.setup_events()
+        
+        # Status configurations
         self.statuses = [
             "Always Online 🟢",
-            "Listening to Music 🎵",
+            "Listening to Music 🎵", 
             "Coding with Python 🐍",
             "Watching Videos 📺",
             "24/7 Active ⚡",
+            "Chilling 🍃",
             "AFK but Here 👻",
+            "Invisible Mode 👁️",
             "Busy Working 💼",
-            "Taking a Break ☕",
-            "Gaming 🎮",
-            "Studying 📚"
+            "Taking a Break ☕"
         ]
         
-        self.running = False
-        
-    def update_status_via_api(self, status_text):
-        """Update status using Discord API (simplified)"""
+    def setup_events(self):
+        @self.client.event
+        async def on_ready():
+            global discord_running
+            logger.info(f"✅ SUCCESS! Logged in as {self.client.user}")
+            logger.info(f"🆔 User ID: {self.client.user.id}")
+            logger.info(f"📧 Email: {self.client.user.email if hasattr(self.client.user, 'email') else 'N/A'}")
+            
+            discord_running = True
+            
+            # Start background tasks
+            self.client.loop.create_task(self.status_loop())
+            self.client.loop.create_task(self.activity_loop())
+            
+            # Set initial status
+            await self.update_status()
+            
+        @self.client.event
+        async def on_disconnect():
+            global discord_running
+            logger.warning("⚠️ Disconnected from Discord")
+            discord_running = False
+            
+        @self.client.event
+        async def on_connect():
+            logger.info("🔗 Connected to Discord gateway")
+            
+        @self.client.event
+        async def on_message(self, message):
+            # Ignore messages to avoid detection
+            pass
+    
+    async def update_status(self):
+        """Update Discord status"""
         try:
-            headers = {
-                'Authorization': self.token,
-                'Content-Type': 'application/json',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
+            status_text = random.choice(self.statuses)
             
-            payload = {
-                'status': 'online',
-                'activities': [{
-                    'name': status_text,
-                    'type': random.randint(0, 3)  # 0: playing, 1: streaming, 2: listening, 3: watching
-                }],
-                'since': int(time.time() * 1000),
-                'afk': False
-            }
+            # Random activity type
+            activity_type = random.choice([
+                discord.ActivityType.playing,
+                discord.ActivityType.listening,
+                discord.ActivityType.watching,
+                discord.ActivityType.streaming
+            ])
             
-            # Try to update via Discord API
-            response = self.session.patch(
-                'https://discord.com/api/v9/users/@me/settings',
-                headers=headers,
-                json=payload,
-                timeout=10
+            activity = discord.Activity(
+                name=status_text,
+                type=activity_type
             )
             
-            if response.status_code in [200, 201, 204]:
-                logger.info(f"✅ Status updated: {status_text}")
-                return True
-            else:
-                logger.warning(f"⚠️ Status update failed: {response.status_code}")
-                return False
-                
+            await self.client.change_presence(
+                activity=activity,
+                status=discord.Status.online
+            )
+            
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            logger.info(f"[{timestamp}] Status: {status_text}")
+            
         except Exception as e:
-            logger.error(f"❌ API Error: {e}")
-            return False
+            logger.error(f"Status update failed: {e}")
     
-    def keep_alive_loop(self):
-        """Main keep-alive loop"""
-        logger.info("🟡 Starting Discord keep-alive...")
-        self.running = True
-        
-        # Initial connection
-        self.update_status_via_api("Starting up... 🔄")
-        
-        while self.running:
-            try:
-                # Random status update
-                status = random.choice(self.statuses)
-                self.update_status_via_api(status)
-                
-                # Simulate activity by updating status periodically
-                sleep_time = random.randint(300, 600)  # 5-10 minutes
-                logger.info(f"⏳ Next update in {sleep_time//60} minutes")
-                
-                # Countdown
-                for i in range(sleep_time):
-                    if not self.running:
-                        break
-                    time.sleep(1)
-                    
-            except KeyboardInterrupt:
-                logger.info("👋 Shutdown requested")
-                break
-            except Exception as e:
-                logger.error(f"💥 Error in keep-alive loop: {e}")
-                time.sleep(60)  # Wait 1 minute before retry
-        
-        logger.info("🛑 Discord keep-alive stopped")
+    async def simulate_typing(self):
+        """Simulate typing activity"""
+        try:
+            # Create DM with self
+            user = self.client.user
+            dm_channel = user.dm_channel
+            if dm_channel is None:
+                dm_channel = await user.create_dm()
+            
+            # Type for 3-8 seconds
+            typing_time = random.randint(3, 8)
+            
+            async with dm_channel.typing():
+                await asyncio.sleep(typing_time)
+            
+            logger.info(f"Typed for {typing_time}s")
+            
+        except Exception as e:
+            logger.debug(f"Typing failed: {e}")
     
-    def start(self):
-        """Start the keep-alive in a separate thread"""
-        self.thread = threading.Thread(target=self.keep_alive_loop, daemon=True)
-        self.thread.start()
+    async def status_loop(self):
+        """Loop to update status"""
+        logger.info("Starting status loop...")
+        while True:
+            await asyncio.sleep(random.randint(300, 600))  # 5-10 minutes
+            await self.update_status()
     
-    def stop(self):
-        """Stop the keep-alive"""
-        self.running = False
-        if self.thread:
-            self.thread.join(timeout=5)
+    async def activity_loop(self):
+        """Loop to simulate activity"""
+        logger.info("Starting activity loop...")
+        while True:
+            await asyncio.sleep(random.randint(600, 1200))  # 10-20 minutes
+            
+            if random.choice([True, False]):
+                await self.simulate_typing()
+            else:
+                await self.update_status()
+    
+    def run(self):
+        """Run the Discord client"""
+        logger.info("Starting Discord client...")
+        
+        try:
+            # This is the KEY LINE - using bot=False for user accounts
+            self.client.run(self.token, bot=False)
+            
+        except discord.LoginFailure as e:
+            logger.error(f"❌ LOGIN FAILED: {e}")
+            logger.error("Possible reasons:")
+            logger.error("1. Invalid token")
+            logger.error("2. Token expired")
+            logger.error("3. Discord is blocking self-bots")
+            
+        except Exception as e:
+            logger.error(f"💥 Unexpected error: {e}")
+            import traceback
+            traceback.print_exc()
 
 # ============================
-# RENDER KEEP-ALIVE PINGER
+# RENDER PINGER
 # ============================
 def render_pinger():
-    """Ping the Flask app to keep Render alive"""
-    time.sleep(5)  # Wait for Flask to start
+    """Ping Flask to keep Render alive"""
+    import requests
     
-    port = int(os.environ.get('PORT', 10000))
-    base_url = f"http://localhost:{port}"
+    time.sleep(5)
     
-    logger.info("🔄 Starting Render keep-alive pinger...")
+    base_url = f"http://localhost:{PORT}"
+    
+    logger.info("Starting Render pinger...")
     
     while True:
         try:
             response = requests.get(f"{base_url}/ping", timeout=10)
             if response.status_code == 200:
-                current_time = datetime.now().strftime("%H:%M:%S")
-                logger.debug(f"✅ Ping successful at {current_time}")
-            else:
-                logger.warning(f"⚠️ Ping status: {response.status_code}")
-                
-        except Exception as e:
-            logger.error(f"❌ Ping failed: {e}")
+                logger.debug(f"Ping OK: {datetime.now().strftime('%H:%M:%S')}")
+        except:
+            pass
         
-        # Ping every 4 minutes (Render sleeps after 5)
-        time.sleep(240)
+        time.sleep(240)  # Every 4 minutes
 
 # ============================
-# MAIN FUNCTION
+# GLOBALS & MAIN
 # ============================
+PORT = int(os.environ.get('PORT', 10000))
+discord_running = False
+
 def main():
-    """Start all services"""
     print("=" * 60)
-    print("🚨 WARNING: This script may violate Discord's Terms of Service!")
-    print("🚨 Use at your own risk!")
+    print("🚨 WARNING: Discord may ban accounts using self-bots!")
+    print("🚨 Use at your own risk for educational purposes only!")
     print("=" * 60)
     
-    logger.info("📦 Starting Discord Keep-Alive System...")
-    
-    # 1. Start Flask server
+    # 1. Start Flask
     flask_thread = threading.Thread(target=start_flask, daemon=True)
     flask_thread.start()
     
@@ -213,29 +244,17 @@ def main():
     pinger_thread = threading.Thread(target=render_pinger, daemon=True)
     pinger_thread.start()
     
-    # 3. Start Discord keep-alive
+    time.sleep(3)
+    
+    # 3. Start Discord
     try:
         discord_client = DiscordKeepAlive()
-        discord_client.start()
+        discord_client.run()
         
-        logger.info("✅ All services started successfully!")
-        logger.info("🌐 Flask server: http://localhost:{}".format(os.environ.get('PORT', 10000)))
-        logger.info("🎮 Discord keep-alive: Active")
-        logger.info("🔄 Render pinger: Active")
-        
-        # Keep main thread alive
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            logger.info("👋 Shutting down...")
-            discord_client.stop()
-            
     except ValueError as e:
-        logger.error(f"❌ Configuration error: {e}")
-        logger.info("💡 Set DISCORD_TOKEN environment variable")
+        logger.error(f"Config error: {e}")
     except Exception as e:
-        logger.error(f"💥 Failed to start: {e}")
+        logger.error(f"Startup failed: {e}")
 
 if __name__ == "__main__":
     main()
