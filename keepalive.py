@@ -34,7 +34,7 @@ PORT = int(os.environ.get('PORT', 10000))
 def home():
     return jsonify({
         "status": "online",
-        "service": "dual-discord-keepalive",
+        "service": "permanent-discord-voice",
         "timestamp": datetime.now().isoformat()
     })
 
@@ -51,9 +51,9 @@ def start_flask():
     app.run(host='0.0.0.0', port=PORT, debug=False, use_reloader=False)
 
 # ============================
-# COMPLETE VOICE CONNECTION (REAL JOIN)
+# COMPLETE VOICE CONNECTION (REAL JOIN + PERMANENT KEEPALIVE)
 # ============================
-class RealVoiceConnection:
+class PermanentVoiceConnection:
     def __init__(self, token, guild_id, channel_id, account_name):
         self.token = token
         self.guild_id = guild_id
@@ -74,9 +74,15 @@ class RealVoiceConnection:
         self.heartbeat_interval = 41250
         self.running = True
         self.connected_voice = False
+        self.last_voice_check = 0
+        
+        # Lock to prevent concurrent rejoin attempts
+        self.rejoin_lock = threading.Lock()
         
     def start(self):
         self.connect_gateway()
+        # Start 30-second monitor
+        threading.Thread(target=self.voice_keepalive_monitor, daemon=True).start()
         
     def connect_gateway(self):
         self.gateway_ws = websocket.WebSocketApp(
@@ -152,6 +158,16 @@ class RealVoiceConnection:
         ws.send(json.dumps(payload))
         logger.info(f"🎙️ [{self.account_name}] Joining channel {self.channel_id} (guild {self.guild_id})")
         
+    # Public method to force rejoin (used by monitor)
+    def force_rejoin(self):
+        with self.rejoin_lock:
+            if self.gateway_ws and self.gateway_ws.sock and self.gateway_ws.sock.connected:
+                logger.warning(f"⚠️ [{self.account_name}] Force rejoin triggered")
+                self.join_voice(self.gateway_ws)
+            else:
+                logger.warning(f"⚠️ [{self.account_name}] Cannot rejoin - gateway not connected, will reconnect")
+                self.reconnect()
+        
     def connect_voice(self):
         endpoint_host = self.endpoint.split(':')[0]
         voice_url = f"wss://{endpoint_host}:443?v=4"
@@ -189,6 +205,7 @@ class RealVoiceConnection:
                 self.voice_port = d.get('port')
                 logger.info(f"🎙️ [{self.account_name}] Voice ready, SSRC={self.ssrc}")
                 self.udp_discovery()
+                self.connected_voice = True
             elif op == 4:
                 pass
             elif op == 8:
@@ -218,10 +235,10 @@ class RealVoiceConnection:
                 }
             }
             self.voice_ws.send(json.dumps(select_payload))
-            self.connected_voice = True
-            logger.info(f"✅ [{self.account_name}] SUCCESSFULLY JOINED VOICE CHANNEL")
+            logger.info(f"✅ [{self.account_name}] PERMANENTLY IN VOICE CHANNEL (deafened)")
         except Exception as e:
             logger.error(f"🎙️ [{self.account_name}] UDP error: {e}")
+            self.connected_voice = False
             
     def gateway_heartbeat(self):
         while self.running and self.gateway_ws and self.gateway_ws.sock:
@@ -239,15 +256,27 @@ class RealVoiceConnection:
             except:
                 break
                 
+    def voice_keepalive_monitor(self):
+        """Check every 30 seconds if still connected to voice; if not, rejoin."""
+        while self.running:
+            time.sleep(30)  # Check every 30 seconds
+            if not self.connected_voice:
+                logger.warning(f"⚠️ [{self.account_name}] Voice not connected! Rejoining...")
+                self.force_rejoin()
+            else:
+                logger.debug(f"✅ [{self.account_name}] Voice still active")
+                
     def on_voice_error(self, ws, error):
         logger.error(f"🎙️ [{self.account_name}] Voice WS error: {error}")
+        self.connected_voice = False
     def on_voice_close(self, ws, code, msg):
         logger.warning(f"🎙️ [{self.account_name}] Voice closed: {code} - {msg}")
-        self.reconnect()
+        self.connected_voice = False
     def on_gateway_error(self, ws, error):
         logger.error(f"🎙️ [{self.account_name}] Gateway error: {error}")
     def on_gateway_close(self, ws, code, msg):
         logger.warning(f"🎙️ [{self.account_name}] Gateway closed: {code} - {msg}")
+        self.connected_voice = False
         if self.running:
             self.reconnect()
     def reconnect(self):
@@ -266,7 +295,7 @@ class RealVoiceConnection:
             self.gateway_ws.close()
 
 # ============================
-# STANDALONE DISCORD CLIENT (NO STATE SHARING)
+# STANDALONE DISCORD CLIENT (WITH PERMANENT VOICE MONITOR)
 # ============================
 class StandaloneDiscordClient:
     def __init__(self, token, account_name, fixed_status=None, rotating_statuses=None, interval_minutes=30):
@@ -343,12 +372,10 @@ class StandaloneDiscordClient:
                     self.session_id = d.get('session_id')
                     user = d.get('user', {})
                     logger.info(f"🎉 [{self.account_name}] Logged in as {user.get('username')} (ID: {user.get('id')})")
-                    # Set initial status
                     if self.fixed_status:
                         self.update_status(self.fixed_status)
                     elif self.rotating_statuses:
                         self.update_status(self.rotating_statuses[0])
-                    # Start voice
                     if self.voice_enabled and self.voice_channel_id:
                         self.start_voice()
                 elif t == 'RESUMED':
@@ -405,7 +432,7 @@ class StandaloneDiscordClient:
             self.update_status(self.rotating_statuses[self.current_index])
             
     def start_voice(self):
-        self.voice_conn = RealVoiceConnection(
+        self.voice_conn = PermanentVoiceConnection(
             self.token,
             self.voice_guild_id,
             self.voice_channel_id,
@@ -483,7 +510,7 @@ class StandaloneDiscordClient:
             self.ws.close()
 
 # ============================
-# KEEP-ALIVE
+# KEEP-ALIVE PINGER
 # ============================
 def render_pinger():
     import requests
@@ -499,7 +526,7 @@ def render_pinger():
 def health_monitor():
     time.sleep(10)
     while True:
-        logger.info("📊 System running - Dual accounts (status + voice)")
+        logger.info("📊 System running - Permanent voice enabled (30s monitor)")
         time.sleep(3600)
 
 # ============================
@@ -507,17 +534,15 @@ def health_monitor():
 # ============================
 def main():
     print("=" * 60)
-    print("DUAL DISCORD KEEP-ALIVE - FULLY ISOLATED")
+    print("PERMANENT DISCORD VOICE KEEP-ALIVE")
     print("💰 Account 1: Fixed 'Fucking RICH 💸💸'")
     print("🔄 Account 2: Rotating: Working On New Video🎥 | NYT💤 | YT- NOTE YOUR TYPE")
-    print("🎙️ Voice: Both can join VC (real UDP handshake)")
+    print("🎙️ Voice: PERMANENT - Never leaves, auto-rejoin every 30 seconds if disconnected")
     print("=" * 60)
 
-    # Read environment variables
     token_one = os.environ.get('DISCORD_TOKEN_ONE', '').strip()
     token_two = os.environ.get('DISCORD_TOKEN_TWO', '').strip()
     
-    # Log token prefixes for debugging (never log full token)
     if token_one:
         logger.info(f"Token One loaded: {token_one[:15]}...")
     else:
@@ -527,16 +552,13 @@ def main():
     else:
         logger.error("DISCORD_TOKEN_TWO is missing!")
 
-    # Your fixed guild and channel IDs
     DEFAULT_GUILD_ID = "893842188037943346"
     DEFAULT_CHANNEL_ID = "896743673587437568"
     
-    # Voice settings for account one
     voice_one_enabled = os.environ.get('VOICE_JOIN_ONE', 'false').lower() == 'true'
     voice_one_guild = os.environ.get('VOICE_GUILD_ID_ONE', DEFAULT_GUILD_ID)
     voice_one_channel = os.environ.get('VOICE_CHANNEL_ID_ONE', DEFAULT_CHANNEL_ID)
     
-    # Voice settings for account two
     voice_two_enabled = os.environ.get('VOICE_JOIN_TWO', 'false').lower() == 'true'
     voice_two_guild = os.environ.get('VOICE_GUILD_ID_TWO', DEFAULT_GUILD_ID)
     voice_two_channel = os.environ.get('VOICE_CHANNEL_ID_TWO', DEFAULT_CHANNEL_ID)
@@ -544,48 +566,36 @@ def main():
     rotation_interval = int(os.environ.get('ROTATION_INTERVAL_MINUTES', '30'))
     rotational_statuses = ["Working On New Video🎥", "NYT💤", "YT- NOTE YOUR TYPE"]
     
-    # Start Flask and helpers
     threading.Thread(target=start_flask, daemon=True).start()
     threading.Thread(target=render_pinger, daemon=True).start()
     threading.Thread(target=health_monitor, daemon=True).start()
-    time.sleep(3)  # Let flask start
+    time.sleep(3)
     
     clients = []
     
-    # Account One
     if token_one:
         client1 = StandaloneDiscordClient(token_one, "ACCOUNT_ONE", fixed_status="Fucking RICH 💸💸")
         if voice_one_enabled:
-            logger.info(f"Account One voice enabled: guild={voice_one_guild}, channel={voice_one_channel}")
             client1.set_voice(True, voice_one_guild, voice_one_channel)
+            logger.info(f"Account One voice: ENABLED -> guild {voice_one_guild}, channel {voice_one_channel}")
         else:
-            logger.info("Account One voice disabled")
+            logger.info("Account One voice: DISABLED")
         client1.start()
         clients.append(client1)
-    else:
-        logger.warning("Skipping Account One - no token")
     
-    # Account Two
     if token_two:
         client2 = StandaloneDiscordClient(token_two, "ACCOUNT_TWO", rotating_statuses=rotational_statuses, interval_minutes=rotation_interval)
         if voice_two_enabled:
-            logger.info(f"Account Two voice enabled: guild={voice_two_guild}, channel={voice_two_channel}")
             client2.set_voice(True, voice_two_guild, voice_two_channel)
+            logger.info(f"Account Two voice: ENABLED -> guild {voice_two_guild}, channel {voice_two_channel}")
         else:
-            logger.info("Account Two voice disabled")
+            logger.info("Account Two voice: DISABLED")
         client2.start()
         clients.append(client2)
-    else:
-        logger.warning("Skipping Account Two - no token")
     
     logger.info("=" * 60)
-    logger.info("✅ ALL CLIENTS STARTED (isolated, no cross-talk)")
-    logger.info("💰 Account One status: 'Fucking RICH 💸💸'")
-    logger.info("🔄 Account Two rotational statuses every {} minutes".format(rotation_interval))
-    if voice_one_enabled:
-        logger.info(f"🎙️ Account One will join voice channel {voice_one_channel}")
-    if voice_two_enabled:
-        logger.info(f"🎙️ Account Two will join voice channel {voice_two_channel}")
+    logger.info("✅ ALL CLIENTS STARTED WITH PERMANENT VOICE MONITORING")
+    logger.info("🎙️ Accounts will be checked every 30 seconds and auto-join if disconnected")
     logger.info("=" * 60)
     
     try:
