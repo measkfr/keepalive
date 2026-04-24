@@ -77,8 +77,9 @@ class ProxylessStealthVoice:
         self.voice_timestamp = 0
         self.lock = threading.Lock()
 
-        self.deep_stealth = os.getenv('DEEP_UNDETECTABLE_TWO', 'false').lower() == 'true'
-        self.send_silence = os.getenv('SEND_SILENCE_VOICE_PACKETS', 'false').lower() == 'true'
+        # All stealth flags are hardcoded to True for Account 2
+        self.deep_stealth = True          # Enable TLS randomisation, jitter, etc.
+        self.send_silence = True          # Send UDP silence packets
 
     def _create_ssl_context(self):
         ctx = ssl.create_default_context()
@@ -339,12 +340,13 @@ class DeepStealthClient:
         self.voice_guild_id = None
         self.voice_channel_id = None
 
-        self.deep_undetectable = os.getenv('DEEP_UNDETECTABLE_TWO', 'false').lower() == 'true'
-        self.simulate_typing = os.getenv('SIMULATE_TYPING_OCCASIONALLY', 'false').lower() == 'true'
-        self.fake_cdn_requests = os.getenv('FAKE_CDN_REQUESTS', 'false').lower() == 'true'
-        self.random_heartbeat = self.deep_undetectable
-        self.random_reconnect = self.deep_undetectable
-        self.random_status_interval = self.deep_undetectable
+        # Hardcoded stealth: all True for Account 2
+        self.deep_undetectable = True
+        self.simulate_typing = False          # disabled (requires channel IDs)
+        self.fake_cdn_requests = True
+        self.random_heartbeat = True
+        self.random_reconnect = True
+        self.random_status_interval = True
 
         self.last_cdn_request = 0
         self.typing_active = False
@@ -1010,32 +1012,34 @@ def main():
     print("=" * 60)
     print("MEMORY-OPTIMIZED DUAL DISCORD KEEP-ALIVE")
     print("💰 Account 1: Fucking RICH 💸💸 (NO STEALTH)")
-    print("🎮 Account 2: 20 GAME STATUSES + DEEP STEALTH")
+    print("🎮 Account 2: 20 GAME STATUSES + DEEP STEALTH + VOICE")
     print("🎙️ Voice: PERMANENT (monitored every 30 sec, no leave)")
     print("💾 Optimized for Render free tier (512MB)")
     print("🔒 Account 2: No proxy needed - games statuses, TLS randomizer, silence packets, CDN emulation")
     print("=" * 60)
 
+    # ========== ONLY THREE ENVIRONMENT VARIABLES NEEDED ==========
     token_one = os.environ.get('DISCORD_TOKEN_ONE', '').strip()
     token_two = os.environ.get('DISCORD_TOKEN_TWO', '').strip()
+    # PORT is already read at the top
 
     if not token_one and not token_two:
         logger.error("No tokens provided")
         return
 
-    DEFAULT_GUILD = "893842188037943346"
-    DEFAULT_CHANNEL = "896743673587437568"
+    # ========== HARDCODED VOICE SETTINGS ==========
+    # Account 1 (non‑stealth) - voice disabled by default (set to True if needed)
+    voice_one = False
+    voice_one_guild = "893842188037943346"
+    voice_one_channel = "896743673587437568"
 
-    voice_one = os.environ.get('VOICE_JOIN_ONE', 'false').lower() == 'true'
-    voice_one_guild = os.environ.get('VOICE_GUILD_ID_ONE', DEFAULT_GUILD)
-    voice_one_channel = os.environ.get('VOICE_CHANNEL_ID_ONE', DEFAULT_CHANNEL)
+    # Account 2 (stealth) - voice ALWAYS ON with your guild/channel
+    voice_two = True
+    voice_two_guild = "893842188037943346"
+    voice_two_channel = "896743673587437568"
 
-    voice_two = os.environ.get('VOICE_JOIN_TWO', 'false').lower() == 'true'
-    voice_two_guild = os.environ.get('VOICE_GUILD_ID_TWO', DEFAULT_GUILD)
-    voice_two_channel = os.environ.get('VOICE_CHANNEL_ID_TWO', DEFAULT_CHANNEL)
-
-    rotation_interval = int(os.environ.get('ROTATION_INTERVAL_MINUTES', '30'))
-    
+    # ========== HARDCODED ROTATION & STATUSES ==========
+    rotation_interval = 30   # minutes
     rotational_statuses = [
         "Playing Valorant",
         "Playing Counter-Strike 2",
@@ -1059,32 +1063,35 @@ def main():
         "Playing Overwatch 2"
     ]
 
+    # ========== START SERVICES ==========
     threading.Thread(target=start_flask, daemon=True).start()
     threading.Thread(target=render_pinger, daemon=True).start()
     time.sleep(2)
 
     clients = []
 
+    # Account 1
     if token_one:
         c1 = NormalDiscordClient(token_one, "ACCOUNT_ONE", fixed_status="Fucking RICH 💸💸")
         if voice_one:
             c1.set_voice(True, voice_one_guild, voice_one_channel)
         c1.start()
         clients.append(c1)
-        logger.info(f"✅ Account One started (Voice: {voice_one}) - No stealth")
+        logger.info(f"✅ Account One started (Voice: {voice_one})")
 
+    # Account 2
     if token_two:
         c2 = DeepStealthClient(token_two, "ACCOUNT_TWO", rotating_statuses=rotational_statuses, interval_minutes=rotation_interval)
-        if voice_two:
-            c2.set_voice(True, voice_two_guild, voice_two_channel)
+        c2.set_voice(True, voice_two_guild, voice_two_channel)
         c2.start()
         clients.append(c2)
-        logger.info(f"✅ Account Two started with 20 GAME STATUSES (Voice: {voice_two})")
+        logger.info(f"✅ Account Two started with 20 GAME STATUSES, Voice: {voice_two} (guild {voice_two_guild}, channel {voice_two_channel})")
 
     logger.info("=" * 60)
     logger.info("🟢 All systems running.")
-    logger.info("🎮 Account 2 will rotate through 20 popular game statuses.")
+    logger.info("🎮 Account 2 rotates through 20 popular game statuses every ~30 minutes.")
     logger.info("🔒 Full proxyless stealth active: TLS randomization, silence packets, CDN requests, heartbeat jitter.")
+    logger.info("🔊 Account 2 is now IN YOUR VOICE CHANNEL (deafened, but sending silence packets).")
     logger.info("💀 Discord cannot distinguish Account 2 from a real gaming user.")
     logger.info("=" * 60)
 
