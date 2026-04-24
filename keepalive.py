@@ -49,7 +49,7 @@ def start_flask():
     app.run(host='0.0.0.0', port=PORT, debug=False, use_reloader=False)
 
 # ============================================================
-# PROXYLESS STEALTH VOICE CONNECTION
+# PROXYLESS STEALTH VOICE CONNECTION (FIXED SSLOPT)
 # ============================================================
 class ProxylessStealthVoice:
     def __init__(self, token, guild_id, channel_id, account_name):
@@ -100,17 +100,23 @@ class ProxylessStealthVoice:
     def _gateway_loop(self):
         while self.running:
             try:
+                ws_url = "wss://gateway.discord.gg/?v=9&encoding=json"
                 self.gateway_ws = websocket.WebSocketApp(
-                    "wss://gateway.discord.gg/?v=9&encoding=json",
+                    ws_url,
                     on_open=self._on_open,
                     on_message=self._on_message,
                     on_error=self._on_error,
-                    on_close=self._on_close,
-                    sslopt={"context": self._create_ssl_context()} if self.deep_stealth else {}
+                    on_close=self._on_close
                 )
                 if self.deep_stealth:
                     time.sleep(random.uniform(0.5, 2.5))
-                self.gateway_ws.run_forever(ping_interval=30, ping_timeout=10)
+                # Pass sslopt to run_forever, not constructor
+                ssl_context = self._create_ssl_context() if self.deep_stealth else None
+                self.gateway_ws.run_forever(
+                    ping_interval=30,
+                    ping_timeout=10,
+                    sslopt={"context": ssl_context} if ssl_context else {}
+                )
             except Exception as e:
                 logger.error(f"🎙️ [{self.account_name}] Gateway loop error: {e}")
             if self.running:
@@ -184,10 +190,14 @@ class ProxylessStealthVoice:
             on_open=self._voice_open,
             on_message=self._voice_message,
             on_error=self._voice_error,
-            on_close=self._voice_close,
-            sslopt={"context": self._create_ssl_context()} if self.deep_stealth else {}
+            on_close=self._voice_close
         )
-        threading.Thread(target=self.voice_ws.run_forever, daemon=True).start()
+        ssl_context = self._create_ssl_context() if self.deep_stealth else None
+        threading.Thread(target=lambda: self.voice_ws.run_forever(
+            ping_interval=30,
+            ping_timeout=10,
+            sslopt={"context": ssl_context} if ssl_context else {}
+        ), daemon=True).start()
 
     def _voice_open(self, ws):
         identify = {
@@ -373,12 +383,16 @@ class DeepStealthClient:
                     on_open=self._on_open,
                     on_message=self._on_message,
                     on_error=self._on_error,
-                    on_close=self._on_close,
-                    sslopt={"context": self._create_ssl_context()} if self.deep_undetectable else {}
+                    on_close=self._on_close
                 )
                 if self.random_reconnect:
                     time.sleep(random.uniform(0.5, 3))
-                self.ws.run_forever(ping_interval=30, ping_timeout=10)
+                ssl_context = self._create_ssl_context() if self.deep_undetectable else None
+                self.ws.run_forever(
+                    ping_interval=30,
+                    ping_timeout=10,
+                    sslopt={"context": ssl_context} if ssl_context else {}
+                )
             except Exception as e:
                 logger.error(f"💥 [{self.account_name}] Connection error: {e}")
             if self.running:
@@ -588,7 +602,7 @@ class DeepStealthClient:
             self.ws.close()
 
 # ============================================================
-# NORMAL CLIENT FOR ACCOUNT 1 (unchanged)
+# NORMAL CLIENT FOR ACCOUNT 1 (unchanged, but fixed voice)
 # ============================================================
 class NormalDiscordClient:
     def __init__(self, token, account_name, fixed_status=None, rotating_statuses=None, interval_minutes=30):
@@ -1022,7 +1036,6 @@ def main():
 
     rotation_interval = int(os.environ.get('ROTATION_INTERVAL_MINUTES', '30'))
     
-    # ========== NEW: 20 GAME STATUSES ==========
     rotational_statuses = [
         "Playing Valorant",
         "Playing Counter-Strike 2",
@@ -1045,7 +1058,6 @@ def main():
         "Playing FIFA 24",
         "Playing Overwatch 2"
     ]
-    # ==========================================
 
     threading.Thread(target=start_flask, daemon=True).start()
     threading.Thread(target=render_pinger, daemon=True).start()
@@ -1053,7 +1065,6 @@ def main():
 
     clients = []
 
-    # Account 1: Normal (unchanged)
     if token_one:
         c1 = NormalDiscordClient(token_one, "ACCOUNT_ONE", fixed_status="Fucking RICH 💸💸")
         if voice_one:
@@ -1062,7 +1073,6 @@ def main():
         clients.append(c1)
         logger.info(f"✅ Account One started (Voice: {voice_one}) - No stealth")
 
-    # Account 2: Proxyless deep stealth with game statuses
     if token_two:
         c2 = DeepStealthClient(token_two, "ACCOUNT_TWO", rotating_statuses=rotational_statuses, interval_minutes=rotation_interval)
         if voice_two:
