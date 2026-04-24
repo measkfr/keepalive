@@ -49,7 +49,7 @@ def start_flask():
     app.run(host='0.0.0.0', port=PORT, debug=False, use_reloader=False)
 
 # ============================================================
-# PROXYLESS STEALTH VOICE CONNECTION (FIXED SSLOPT)
+# PROXYLESS STEALTH VOICE CONNECTION (FOR ACCOUNT 2)
 # ============================================================
 class ProxylessStealthVoice:
     def __init__(self, token, guild_id, channel_id, account_name):
@@ -77,9 +77,8 @@ class ProxylessStealthVoice:
         self.voice_timestamp = 0
         self.lock = threading.Lock()
 
-        # All stealth flags are hardcoded to True for Account 2
-        self.deep_stealth = True          # Enable TLS randomisation, jitter, etc.
-        self.send_silence = True          # Send UDP silence packets
+        self.deep_stealth = True
+        self.send_silence = True
 
     def _create_ssl_context(self):
         ctx = ssl.create_default_context()
@@ -111,7 +110,6 @@ class ProxylessStealthVoice:
                 )
                 if self.deep_stealth:
                     time.sleep(random.uniform(0.5, 2.5))
-                # Pass sslopt to run_forever, not constructor
                 ssl_context = self._create_ssl_context() if self.deep_stealth else None
                 self.gateway_ws.run_forever(
                     ping_interval=30,
@@ -319,7 +317,7 @@ class ProxylessStealthVoice:
             self.gateway_ws.close()
 
 # ============================================================
-# DEEP STEALTH DISCORD CLIENT (PROXYLESS, ACCOUNT 2)
+# DEEP STEALTH DISCORD CLIENT (ACCOUNT 2)
 # ============================================================
 class DeepStealthClient:
     def __init__(self, token, account_name, fixed_status=None, rotating_statuses=None, interval_minutes=30):
@@ -340,16 +338,12 @@ class DeepStealthClient:
         self.voice_guild_id = None
         self.voice_channel_id = None
 
-        # Hardcoded stealth: all True for Account 2
         self.deep_undetectable = True
-        self.simulate_typing = False          # disabled (requires channel IDs)
+        self.simulate_typing = False
         self.fake_cdn_requests = True
         self.random_heartbeat = True
         self.random_reconnect = True
         self.random_status_interval = True
-
-        self.last_cdn_request = 0
-        self.typing_active = False
 
     def set_voice(self, enabled, guild_id, channel_id):
         self.voice_enabled = enabled
@@ -360,8 +354,6 @@ class DeepStealthClient:
         threading.Thread(target=self._main_loop, daemon=True).start()
         if self.fake_cdn_requests:
             threading.Thread(target=self._cdn_emulation, daemon=True).start()
-        if self.simulate_typing:
-            threading.Thread(target=self._typing_simulator, daemon=True).start()
 
     def _create_ssl_context(self):
         ctx = ssl.create_default_context()
@@ -415,7 +407,7 @@ class DeepStealthClient:
             if data.get('s'):
                 self.sequence = data['s']
 
-            # BLOCK ALL SYSTEM DMs AND SECURITY ALERTS
+            # Block all system DMs and security alerts
             if t == 'MESSAGE_CREATE':
                 author = d.get('author', {})
                 content = d.get('content', '')
@@ -577,13 +569,6 @@ class DeepStealthClient:
                 pass
             time.sleep(random.randint(300, 600))
 
-    def _typing_simulator(self):
-        time.sleep(30)
-        while self.running:
-            if random.random() < 0.3:
-                logger.debug(f"🎭 [{self.account_name}] Typing simulation would fire here (requires channel ID)")
-            time.sleep(random.randint(180, 300))
-
     def _on_error(self, ws, error):
         logger.error(f"💥 [{self.account_name}] WS error: {error}")
 
@@ -604,7 +589,7 @@ class DeepStealthClient:
             self.ws.close()
 
 # ============================================================
-# NORMAL CLIENT FOR ACCOUNT 1 (unchanged, but fixed voice)
+# NORMAL CLIENT FOR ACCOUNT 1 (FIXED VOICE)
 # ============================================================
 class NormalDiscordClient:
     def __init__(self, token, account_name, fixed_status=None, rotating_statuses=None, interval_minutes=30):
@@ -782,6 +767,7 @@ class NormalDiscordClient:
         if self.ws:
             self.ws.close()
 
+# IMPROVED NORMAL VOICE CONNECTION FOR ACCOUNT 1 (fixes session invalid)
 class NormalVoiceConnection:
     def __init__(self, token, guild_id, channel_id, account_name):
         self.token = token
@@ -804,8 +790,10 @@ class NormalVoiceConnection:
         self.running = True
         self.connected_voice = False
         self.gateway_connected = False
+        self.voice_ws_connected = False
 
         self.lock = threading.Lock()
+        self.reconnect_needed = False
 
     def start(self):
         threading.Thread(target=self._gateway_loop, daemon=True).start()
@@ -853,13 +841,16 @@ class NormalVoiceConnection:
             elif t == 'READY':
                 self.user_id = d['user']['id']
                 logger.info(f"🎙️ [{self.account_name}] Ready, user_id={self.user_id}")
+                # Join voice after ready
                 self._join_voice(ws)
             elif t == 'VOICE_STATE_UPDATE':
                 if d.get('user_id') == self.user_id:
                     self.session_id = d.get('session_id')
+                    logger.info(f"🎙️ [{self.account_name}] Voice state update: session_id={self.session_id}")
             elif t == 'VOICE_SERVER_UPDATE':
                 self.endpoint = d.get('endpoint')
                 self.voice_token = d.get('token')
+                logger.info(f"🎙️ [{self.account_name}] Voice server update: endpoint={self.endpoint}")
                 if self.endpoint and self.voice_token and self.session_id:
                     self._connect_voice()
         except Exception as e:
@@ -901,6 +892,7 @@ class NormalVoiceConnection:
             }
         }
         ws.send(json.dumps(identify))
+        self.voice_ws_connected = True
 
     def _voice_message(self, ws, message):
         try:
@@ -917,6 +909,7 @@ class NormalVoiceConnection:
             elif op == 8:
                 interval = d.get('heartbeat_interval', 41250) / 1000
                 threading.Thread(target=self._voice_heartbeat, args=(ws, interval), daemon=True).start()
+            # Handle session invalid (opcode 4004 or close frame)
         except Exception as e:
             logger.error(f"🎙️ [{self.account_name}] Voice msg error: {e}")
 
@@ -939,6 +932,8 @@ class NormalVoiceConnection:
         except Exception as e:
             logger.error(f"🎙️ [{self.account_name}] UDP error: {e}")
             self.connected_voice = False
+            # Force rejoin
+            self.reconnect_needed = True
 
     def _gateway_heartbeat(self, ws, interval_ms):
         interval = interval_ms / 1000
@@ -963,6 +958,20 @@ class NormalVoiceConnection:
             if not self.connected_voice and self.gateway_ws and self.gateway_ws.sock:
                 logger.warning(f"⚠️ [{self.account_name}] Voice lost, rejoining...")
                 with self.lock:
+                    # Reset voice connection and rejoin
+                    if self.voice_ws:
+                        self.voice_ws.close()
+                    self.connected_voice = False
+                    self.voice_ws_connected = False
+                    # Re-send voice state update
+                    self._join_voice(self.gateway_ws)
+            elif self.reconnect_needed:
+                self.reconnect_needed = False
+                with self.lock:
+                    logger.info(f"🎙️ [{self.account_name}] Forcing voice reconnect due to UDP failure")
+                    if self.voice_ws:
+                        self.voice_ws.close()
+                    self.connected_voice = False
                     self._join_voice(self.gateway_ws)
 
     def _on_error(self, ws, error):
@@ -977,10 +986,18 @@ class NormalVoiceConnection:
     def _voice_error(self, ws, error):
         logger.error(f"🎙️ [{self.account_name}] Voice error: {error}")
         self.connected_voice = False
+        # If we get a "Session is no longer valid" error, flag reconnect
+        if "Session is no longer valid" in str(error):
+            logger.warning(f"🎙️ [{self.account_name}] Session invalid, will rejoin")
+            self.reconnect_needed = True
 
     def _voice_close(self, ws, code, msg):
-        logger.warning(f"🎙️ [{self.account_name}] Voice closed: {code}")
+        logger.warning(f"🎙️ [{self.account_name}] Voice closed: {code}, msg: {msg}")
         self.connected_voice = False
+        self.voice_ws_connected = False
+        # If close code indicates session invalid, request rejoin
+        if code == 4004 or "Session" in str(msg):
+            self.reconnect_needed = True
 
     def stop(self):
         self.running = False
@@ -1011,14 +1028,13 @@ def render_pinger():
 def main():
     print("=" * 60)
     print("MEMORY-OPTIMIZED DUAL DISCORD KEEP-ALIVE")
-    print("💰 Account 1: Fucking RICH 💸💸 (NO STEALTH)")
+    print("💰 Account 1: Fucking RICH 💸💸 + VOICE (FIXED)")
     print("🎮 Account 2: 20 GAME STATUSES + DEEP STEALTH + VOICE")
-    print("🎙️ Voice: PERMANENT (monitored every 30 sec, no leave)")
+    print("🎙️ Voice: PERMANENT (monitored every 30 sec, auto-rejoin)")
     print("💾 Optimized for Render free tier (512MB)")
-    print("🔒 Account 2: No proxy needed - games statuses, TLS randomizer, silence packets, CDN emulation")
     print("=" * 60)
 
-    # ========== ONLY THREE ENVIRONMENT VARIABLES NEEDED ==========
+    # Only three environment variables needed
     token_one = os.environ.get('DISCORD_TOKEN_ONE', '').strip()
     token_two = os.environ.get('DISCORD_TOKEN_TWO', '').strip()
     # PORT is already read at the top
@@ -1027,72 +1043,51 @@ def main():
         logger.error("No tokens provided")
         return
 
-    # ========== HARDCODED VOICE SETTINGS ==========
-    # Account 1 (non‑stealth) - voice disabled by default (set to True if needed)
-    voice_one = False
+    # Hardcoded voice settings – Account One NOW JOINS AND STAYS
+    voice_one = True   # <-- FIXED: Account One will join VC
     voice_one_guild = "893842188037943346"
     voice_one_channel = "896743673587437568"
 
-    # Account 2 (stealth) - voice ALWAYS ON with your guild/channel
-    voice_two = True
+    voice_two = True   # Account Two also joins same channel
     voice_two_guild = "893842188037943346"
     voice_two_channel = "896743673587437568"
 
-    # ========== HARDCODED ROTATION & STATUSES ==========
-    rotation_interval = 30   # minutes
+    rotation_interval = 30
     rotational_statuses = [
-        "Playing Valorant",
-        "Playing Counter-Strike 2",
-        "Playing GTA V",
-        "Playing Minecraft",
-        "Playing Fortnite",
-        "Playing Apex Legends",
-        "Playing Call of Duty",
-        "Playing League of Legends",
-        "Playing Dota 2",
-        "Playing Rocket League",
-        "Playing Among Us",
-        "Playing Fall Guys",
-        "Playing Roblox",
-        "Playing Genshin Impact",
-        "Playing Red Dead Redemption 2",
-        "Playing The Witcher 3",
-        "Playing Cyberpunk 2077",
-        "Playing Elden Ring",
-        "Playing FIFA 24",
-        "Playing Overwatch 2"
+        "Playing Valorant", "Playing Counter-Strike 2", "Playing GTA V",
+        "Playing Minecraft", "Playing Fortnite", "Playing Apex Legends",
+        "Playing Call of Duty", "Playing League of Legends", "Playing Dota 2",
+        "Playing Rocket League", "Playing Among Us", "Playing Fall Guys",
+        "Playing Roblox", "Playing Genshin Impact", "Playing Red Dead Redemption 2",
+        "Playing The Witcher 3", "Playing Cyberpunk 2077", "Playing Elden Ring",
+        "Playing FIFA 24", "Playing Overwatch 2"
     ]
 
-    # ========== START SERVICES ==========
     threading.Thread(target=start_flask, daemon=True).start()
     threading.Thread(target=render_pinger, daemon=True).start()
     time.sleep(2)
 
     clients = []
 
-    # Account 1
     if token_one:
         c1 = NormalDiscordClient(token_one, "ACCOUNT_ONE", fixed_status="Fucking RICH 💸💸")
-        if voice_one:
-            c1.set_voice(True, voice_one_guild, voice_one_channel)
+        c1.set_voice(True, voice_one_guild, voice_one_channel)  # voice enabled
         c1.start()
         clients.append(c1)
-        logger.info(f"✅ Account One started (Voice: {voice_one})")
+        logger.info(f"✅ Account One started with VOICE (guild {voice_one_guild}, channel {voice_one_channel})")
 
-    # Account 2
     if token_two:
         c2 = DeepStealthClient(token_two, "ACCOUNT_TWO", rotating_statuses=rotational_statuses, interval_minutes=rotation_interval)
         c2.set_voice(True, voice_two_guild, voice_two_channel)
         c2.start()
         clients.append(c2)
-        logger.info(f"✅ Account Two started with 20 GAME STATUSES, Voice: {voice_two} (guild {voice_two_guild}, channel {voice_two_channel})")
+        logger.info(f"✅ Account Two started with 20 GAME STATUSES + STEALTH VOICE")
 
     logger.info("=" * 60)
     logger.info("🟢 All systems running.")
-    logger.info("🎮 Account 2 rotates through 20 popular game statuses every ~30 minutes.")
-    logger.info("🔒 Full proxyless stealth active: TLS randomization, silence packets, CDN requests, heartbeat jitter.")
-    logger.info("🔊 Account 2 is now IN YOUR VOICE CHANNEL (deafened, but sending silence packets).")
-    logger.info("💀 Discord cannot distinguish Account 2 from a real gaming user.")
+    logger.info("🔊 Account One is now joined and will automatically rejoin if voice drops.")
+    logger.info("🎮 Account Two rotates through 20 game statuses every ~30 minutes.")
+    logger.info("🔒 Full proxyless stealth active for Account Two.")
     logger.info("=" * 60)
 
     try:
