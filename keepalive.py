@@ -1045,12 +1045,12 @@ def main():
 
     # Hardcoded voice settings – Account One NOW JOINS AND STAYS
     voice_one = True   # <-- FIXED: Account One will join VC
-    voice_one_guild = "893842188037943346"
-    voice_one_channel = "896743673587437568"
+    voice_one_guild = "723642750594973777"
+    voice_one_channel = "768103409420337152"
 
     voice_two = True   # Account Two also joins same channel
-    voice_two_guild = "893842188037943346"
-    voice_two_channel = "896743673587437568"
+    voice_two_guild = "723642750594973777"
+    voice_two_channel = "768103409420337152"
 
     rotation_interval = 30
     rotational_statuses = [
